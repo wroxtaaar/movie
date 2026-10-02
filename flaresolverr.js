@@ -30,9 +30,9 @@ function toInt(s) {
 
 // Parse a 1337x search-results page into rows. The magnet is NOT here — it
 // lives on each torrent's detail page, fetched lazily via magnet1337x().
-async function search1337x(query, limit = 20) {
+async function search1337x(query, limit = 20, maxTimeout = 7000) {
   const q = encodeURIComponent(query.trim()).replace(/%20/g, '+');
-  const html = await solve(`${BASE}/search/${q}/1/`);
+  const html = await solve(`${BASE}/search/${q}/1/`, maxTimeout);
   const $ = cheerio.load(html);
   const results = [];
 
