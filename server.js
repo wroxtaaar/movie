@@ -21,6 +21,10 @@ process.on('uncaughtException', (err) => {
 const PORT = process.env.PORT || 3000;
 const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w342';
+const X1337_SEARCH_TIMEOUT_MS = Math.max(
+  3000,
+  Math.min(parseInt(process.env.X1337_SEARCH_TIMEOUT_MS, 10) || 8000, 15000)
+);
 
 // --- Enable torrent providers (public, no auth) -----------------------------
 // These are the more reliable scrapers. If one breaks upstream it is skipped
@@ -193,19 +197,25 @@ app.get('/api/search', async (req, res) => {
   const x1337Promise = (async () => {
     if (!flaresolverr.enabled()) return [];
     try {
-      const rows = await flaresolverr.search1337x(q, 20);
-      return await Promise.all(
-        rows.map(async (r) => ({
-          id: cacheEntry({ kind: '1337x', detailPath: r.detailPath }),
-          title: r.title,
-          provider: '1337x',
-          size: r.size,
-          seeds: r.seeds,
-          peers: r.peers,
-          magnet: null,
-          poster: await fetchPoster(r.title),
-        }))
+      // 1337x is optional enrichment. Never let a Cloudflare/browser challenge
+      // hold the whole search request open.
+      const rows = await withTimeout(
+        flaresolverr.search1337x(q, 20, X1337_SEARCH_TIMEOUT_MS - 1000),
+        X1337_SEARCH_TIMEOUT_MS,
+        '1337x search'
       );
+      return rows.map((r) => ({
+        id: cacheEntry({ kind: '1337x', detailPath: r.detailPath }),
+        title: r.title,
+        provider: '1337x',
+        size: r.size,
+        seeds: r.seeds,
+        peers: r.peers,
+        magnet: null,
+        // Poster lookup is deliberately skipped here: it is non-essential and
+        // can add several seconds to an otherwise fast search.
+        poster: null,
+      }));
     } catch (err) {
       console.warn('1337x (FlareSolverr) search failed:', err.message);
       return [];
@@ -305,6 +315,20 @@ async function ytsFetch(query) {
   throw lastErr || new Error('All YTS mirrors failed');
 }
 
+// Lazy poster fallback used when a YTS image host is unavailable in the browser.
+app.get('/api/poster', async (req, res) => {
+  const title = (req.query.title || '').trim();
+  const year = (req.query.year || '').trim();
+  if (!title) return res.status(400).json({ error: 'Missing title' });
+
+  try {
+    const poster = await fetchPoster(year ? title + ' ' + year : title);
+    res.json({ poster: poster || null });
+  } catch {
+    res.json({ poster: null });
+  }
+});
+
 app.get('/api/browse', async (req, res) => {
   const sort = ALLOWED_SORTS.includes(req.query.sort) ? req.query.sort : 'download_count';
   const genre = (req.query.genre || '').trim();
@@ -402,5 +426,6 @@ app.listen(PORT, () => {
   console.log(`\n  Torrent Movie Search running at http://localhost:${PORT}`);
   console.log(`  Providers: ${PROVIDERS.join(', ')}`);
   console.log(`  1337x (FlareSolverr): ${flaresolverr.enabled() ? 'enabled @ ' + flaresolverr.FLARESOLVERR_URL : 'DISABLED (set FLARESOLVERR_URL)'}`);
+  console.log(`  1337x search timeout: ${X1337_SEARCH_TIMEOUT_MS}ms`);
   console.log(`  TMDB posters: ${TMDB_API_KEY ? 'enabled' : 'DISABLED (set TMDB_API_KEY in .env)'}\n`);
 });
