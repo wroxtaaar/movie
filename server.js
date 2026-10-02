@@ -98,8 +98,8 @@ function normalizePosterTitle(value) {
     .toLowerCase()
     .replace(/&/g, ' and ')
     .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\\b(the|a|an)\\b/g, ' ')
-    .replace(/\\s+/g, ' ')
+    .replace(/\b(the|a|an)\b/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
