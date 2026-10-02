@@ -356,8 +356,14 @@ app.get('/api/poster', async (req, res) => {
 
   try {
     const poster = await fetchPoster(year ? title + ' ' + year : title);
+    if (poster && req.headers.accept && req.headers.accept.includes('image/')) {
+      return res.redirect(302, poster);
+    }
     res.json({ poster: poster || null });
   } catch {
+    if (req.headers.accept && req.headers.accept.includes('image/')) {
+      return res.status(404).end();
+    }
     res.json({ poster: null });
   }
 });
