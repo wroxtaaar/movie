@@ -173,9 +173,14 @@ async function doBrowse(params, tagEl) {
 
 function buildBrowseCards(items) {
   return items.map((m, idx) => {
-    const poster = m.poster
-      ? `<img src="${esc(m.poster)}" data-full="${esc(m.backdrop || m.poster)}" data-title="${esc(m.title)}" data-year="${esc(m.year || '')}" alt="" loading="lazy" onerror="fallbackPoster(this)" />`
-      : `<div class="ph">🎞️</div>`;
+    // Always resolve browse artwork through the backend. YTS poster URLs are
+    // currently unreliable and can point to unrelated artwork.
+    const posterParams = new URLSearchParams({
+      title: m.title || '',
+      year: m.year || '',
+    });
+    const posterUrl = '/api/poster?' + posterParams.toString();
+    const poster = `<img src="${esc(posterUrl)}" data-full="${esc(posterUrl)}" data-title="${esc(m.title)}" data-year="${esc(m.year || '')}" alt="" loading="lazy" onerror="fallbackPoster(this)" />`;
     // Default the card to its best-seeded quality so the badge, meta and the
     // copied/added magnet are all consistent.
     let bestIdx = 0, best = -1;
