@@ -103,13 +103,59 @@ function normalizePosterTitle(value) {
     .trim();
 }
 
+async function imdbPoster(title, year = '') {
+  try {
+    const query = encodeURIComponent((title + ' ' + year).trim());
+    const url = 'https://v3.sg.media-imdb.com/suggestion/titles/x/' + query + '.json?includeVideos=0';
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(4000),
+      headers: { accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const wanted = normalizePosterTitle(title);
+    const wantedYear = String(year || '');
+
+    const candidates = (data.d || [])
+      .filter((r) =>
+        typeof r.id === 'string' &&
+        r.id.startsWith('tt') &&
+        r.i &&
+        r.i.imageUrl &&
+        ['movie', 'tvMovie', 'video', 'short'].includes(r.qid)
+      )
+      .map((r) => {
+        const candidate = normalizePosterTitle(r.l || '');
+        const candidateYear = String(r.y || '');
+
+        let score = 0;
+        if (candidate === wanted) score += 100;
+        if (wantedYear && candidateYear === wantedYear) score += 100;
+        if (r.qid === 'movie') score += 10;
+        score += Math.max(0, 20 - (r.rank || 20));
+
+        return { r, candidate, candidateYear, score };
+      })
+      .filter((x) =>
+        x.candidate === wanted &&
+        (!wantedYear || x.candidateYear === wantedYear)
+      )
+      .sort((a, b) => b.score - a.score);
+
+    return candidates[0]?.r.i.imageUrl || null;
+  } catch {
+    return null;
+  }
+}
+
 async function itunesPoster(title, year = '') {
   try {
     const url = new URL('https://itunes.apple.com/search');
-    url.searchParams.set('term', title);
+    url.searchParams.set('term', (title + ' ' + year).trim());
     url.searchParams.set('limit', '25');
 
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
     if (!res.ok) return null;
 
     const data = await res.json();
@@ -117,34 +163,26 @@ async function itunesPoster(title, year = '') {
     const wantedYear = String(year || '');
 
     const candidates = (data.results || [])
-      .filter((r) => r.artworkUrl100 && (r.kind === 'feature-movie' || r.wrapperType === 'track'))
-      .map((r) => {
-        const candidate = normalizePosterTitle(r.trackName || r.collectionName || '');
-        const candidateYear = String(r.releaseDate || '').slice(0, 4);
+      .filter((r) => r.artworkUrl100 && r.kind === 'feature-movie')
+      .map((r) => ({
+        r,
+        candidate: normalizePosterTitle(r.trackName || r.collectionName || ''),
+        candidateYear: String(r.releaseDate || '').slice(0, 4),
+      }))
+      .filter((x) =>
+        x.candidate === wanted &&
+        (!wantedYear || x.candidateYear === wantedYear)
+      );
 
-        let score = 0;
-        if (candidate === wanted) score += 100;
-        else if (candidate.includes(wanted) || wanted.includes(candidate)) score += 45;
-
-        if (wantedYear && candidateYear === wantedYear) score += 35;
-        if (r.kind === 'feature-movie') score += 10;
-
-        return { r, score };
-      })
-      .sort((a, b) => b.score - a.score);
-
-    // Do not return a random poster for a title that does not match.
     const pick = candidates[0];
-    if (!pick || pick.score < 60) return null;
-
-    return pick.r.artworkUrl100.replace('100x100bb', '600x600bb');
+    return pick ? pick.r.artworkUrl100.replace('100x100bb', '600x600bb') : null;
   } catch {
     return null;
   }
 }
 
-// Try TMDB first (best art), then fall back to the keyless iTunes source so
-// posters still appear when no TMDB key is configured.
+// Resolve artwork from TMDB first, then IMDb's title suggestion service, then
+// a strict iTunes movie match. Never accept fuzzy/random artwork.
 async function fetchPoster(rawTitle) {
   const { title, year } = parseTitle(rawTitle);
   if (!title) return null;
@@ -153,6 +191,7 @@ async function fetchPoster(rawTitle) {
   if (posterCache.has(key)) return posterCache.get(key);
 
   let poster = await tmdbPoster(title, year);
+  if (!poster) poster = await imdbPoster(title, year);
   if (!poster) poster = await itunesPoster(title, year);
   posterCache.set(key, poster);
   return poster;
