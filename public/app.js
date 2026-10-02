@@ -2,6 +2,33 @@ const $ = (sel) => document.querySelector(sel);
 const resultsEl = $('#results');
 const statusEl = $('#status');
 
+async function fallbackPoster(img) {
+  // Try the backend fallback once, then use the normal placeholder.
+  if (img.dataset.posterFallback === '1') {
+    img.parentNode.innerHTML = '<div class="ph">🎞️</div>';
+    return;
+  }
+  img.dataset.posterFallback = '1';
+
+  try {
+    const params = new URLSearchParams({
+      title: img.dataset.title || '',
+      year: img.dataset.year || '',
+    });
+    const res = await fetch('/api/poster?' + params.toString());
+    const data = await res.json();
+    if (res.ok && data.poster) {
+      img.src = data.poster;
+      img.dataset.full = data.poster;
+      return;
+    }
+  } catch {
+    // Fall through to the placeholder.
+  }
+
+  img.parentNode.innerHTML = '<div class="ph">🎞️</div>';
+}
+
 // Browse results (from YTS) are kept here so card buttons can read the magnet
 // for the currently selected quality without another request.
 let browseData = [];
@@ -147,7 +174,7 @@ async function doBrowse(params, tagEl) {
 function buildBrowseCards(items) {
   return items.map((m, idx) => {
     const poster = m.poster
-      ? `<img src="${esc(m.poster)}" data-full="${esc(m.backdrop || m.poster)}" alt="" loading="lazy" onerror="this.parentNode.innerHTML='<div class=\\'ph\\'>🎞️</div>'" />`
+      ? `<img src="${esc(m.poster)}" data-full="${esc(m.backdrop || m.poster)}" data-title="${esc(m.title)}" data-year="${esc(m.year || '')}" alt="" loading="lazy" onerror="fallbackPoster(this)" />`
       : `<div class="ph">🎞️</div>`;
     // Default the card to its best-seeded quality so the badge, meta and the
     // copied/added magnet are all consistent.
