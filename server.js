@@ -93,21 +93,51 @@ async function tmdbPoster(title, year) {
 }
 
 // Keyless fallback: Apple's iTunes Search API returns movie artwork with no key.
-async function itunesPoster(title) {
+function normalizePosterTitle(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\\b(the|a|an)\\b/g, ' ')
+    .replace(/\\s+/g, ' ')
+    .trim();
+}
+
+async function itunesPoster(title, year = '') {
   try {
     const url = new URL('https://itunes.apple.com/search');
     url.searchParams.set('term', title);
-    // The movie-only media/entity filter returns nothing in some storefronts,
-    // so search broadly and prefer an actual movie among the top results.
-    url.searchParams.set('limit', '5');
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    url.searchParams.set('limit', '25');
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
+
     const data = await res.json();
-    const results = data.results || [];
-    const pick = results.find((r) => r.kind === 'feature-movie' && r.artworkUrl100)
-      || results.find((r) => r.artworkUrl100);
-    // upscale the thumbnail to a poster-sized image
-    return pick ? pick.artworkUrl100.replace('100x100bb', '600x600bb') : null;
+    const wanted = normalizePosterTitle(title);
+    const wantedYear = String(year || '');
+
+    const candidates = (data.results || [])
+      .filter((r) => r.artworkUrl100 && (r.kind === 'feature-movie' || r.wrapperType === 'track'))
+      .map((r) => {
+        const candidate = normalizePosterTitle(r.trackName || r.collectionName || '');
+        const candidateYear = String(r.releaseDate || '').slice(0, 4);
+
+        let score = 0;
+        if (candidate === wanted) score += 100;
+        else if (candidate.includes(wanted) || wanted.includes(candidate)) score += 45;
+
+        if (wantedYear && candidateYear === wantedYear) score += 35;
+        if (r.kind === 'feature-movie') score += 10;
+
+        return { r, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    // Do not return a random poster for a title that does not match.
+    const pick = candidates[0];
+    if (!pick || pick.score < 60) return null;
+
+    return pick.r.artworkUrl100.replace('100x100bb', '600x600bb');
   } catch {
     return null;
   }
@@ -123,7 +153,7 @@ async function fetchPoster(rawTitle) {
   if (posterCache.has(key)) return posterCache.get(key);
 
   let poster = await tmdbPoster(title, year);
-  if (!poster) poster = await itunesPoster(title);
+  if (!poster) poster = await itunesPoster(title, year);
   posterCache.set(key, poster);
   return poster;
 }
@@ -275,8 +305,11 @@ function mapYtsMovies(movies) {
     year: m.year,
     rating: m.rating,
     genres: m.genres || [],
-    poster: m.medium_cover_image || m.large_cover_image || null,
-    backdrop: m.large_cover_image || m.medium_cover_image || null,
+    // Do not trust the YTS image CDN for card artwork: some mirrors are
+    // currently returning unrelated thumbnails. The frontend resolves a
+    // verified poster from /api/poster using title + year.
+    poster: null,
+    backdrop: null,
     summary: m.summary || '',
     torrents: (m.torrents || []).map((t) => ({
       quality: `${t.quality}${t.type ? ' ' + t.type : ''}`,
