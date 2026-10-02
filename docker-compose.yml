@@ -22,10 +22,12 @@ services:
   # Solves Cloudflare's anti-bot challenge so 1337x results come through.
   # Uses a headless browser, so it's a bit heavy on low-power boards (~250MB RAM).
   flaresolverr:
-    # Pinned: v3.3.24 has an ARM Chrome-startup regression. v3.3.21 is stable on arm64.
-    image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
+    # v3.5.2 is the current stable release and includes Chromium/dependency updates.
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
     container_name: flaresolverr
     environment:
       - LOG_LEVEL=info
       - TZ=UTC
+      # Keep the browser language predictable for challenge detection.
+      - LANG=en-US
     restart: unless-stopped
